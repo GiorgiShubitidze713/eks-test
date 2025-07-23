@@ -1,0 +1,53 @@
+# GitHub Actions Workflow: Build, Push to ECR, and Deploy to EKS using Secrets
+
+name: Build and Deploy to EKS
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Build and Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1. Checkout your repository's code
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    # 2. Configure AWS credentials using secrets
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+
+    # 3. Log in to Amazon ECR
+    # This action is more secure and reliable than running the command manually
+    - name: Login to Amazon ECR
+      uses: aws-actions/amazon-ecr-login@v2
+
+    # 4. Build, tag, and push Docker image to ECR
+    # Builds the image directly with the full ECR repository URI and 'latest' tag
+    - name: Build and Push Docker image
+      run: |
+        docker build -t ${{ secrets.ECR_REPO_URI }}:latest .
+        docker push ${{ secrets.ECR_REPO_URI }}:latest
+
+    # 5. Configure kubectl for your EKS cluster
+    - name: Update kubeconfig
+      run: |
+        aws eks update-kubeconfig --name ${{ secrets.EKS_CLUSTER_NAME }} --region ${{ secrets.AWS_REGION }}
+
+    # 6. Restart the deployment in the 'prod' namespace to pull the new image
+    - name: Force rollout restart
+      run: |
+        echo "Restarting deployment ${{ secrets.K8S_DEPLOYMENT_NAME }} in namespace ${{ secrets.K8S_NAMESPACE }}..."
+        kubectl rollout restart deployment/${{ secrets.K8S_DEPLOYMENT_NAME }} -n ${{ secrets.K8S_NAMESPACE }}
+        
+        echo "Waiting for rollout to complete..."
+        kubectl rollout status deployment/${{ secrets.K8S_DEPLOYMENT_NAME }} -n ${{ secrets.K8S_NAMESPACE }} --timeout=2m
+        echo "Deployment successful!"
